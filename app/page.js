@@ -110,7 +110,7 @@ export default async function Home() {
              <div className="absolute right-0 top-0 w-32 h-32 bg-green-500/15 rounded-full blur-2xl pointer-events-none"></div>
             <p className="text-green-500 text-xs uppercase font-bold tracking-wider mb-2 relative z-10">Emisiones Evitadas</p>
             <h2 className="text-3xl md:text-4xl font-black text-green-400 relative z-10 drop-shadow-[0_0_10px_rgba(34,197,94,0.3)]">
-              -{emisionesEvitadas.toLocaleString('es-EC', { maximumFractionDigits: 1 })}
+              -{emisionesEvitadas.toLocaleString('es-EC', { maximumFractionDigits: 1 })} <span className="text-sm font-normal text-zinc-500">kg CO2e</span>
             </h2>
           </div>
 
@@ -184,7 +184,7 @@ export default async function Home() {
 
           <div className="bg-zinc-900 p-5 rounded-xl border border-indigo-900/40 shadow-xl relative overflow-hidden sm:col-span-2 lg:col-span-1">
             <div className="absolute right-0 top-0 w-24 h-24 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none"></div>
-            <p className="text-indigo-400/80 text-xs uppercase font-bold tracking-wider mb-3 relative z-10">Impacto por Facility</p>
+            <p className="text-indigo-400/80 text-xs uppercase font-bold tracking-wider mb-3 relative z-10">Impacto por Sede Operativa</p>
             <div className="space-y-2 overflow-y-auto max-h-24 pr-2 custom-scrollbar relative z-10">
               {Object.entries(facilityData).map(([facility, cantidad]) => (
                 <div key={facility} className="flex justify-between items-center text-sm border-b border-zinc-800/50 pb-1">
@@ -200,6 +200,21 @@ export default async function Home() {
 
         {/* SECCIÓN 4: GRÁFICOS INTERACTIVOS (YA RESPONSIVE INTERNAMENTE) */}
         <DashboardClient rawData={rawData} />
+
+        {/* ========================================== */}
+        {/* FOOTER PROFESIONAL DE CRÉDITOS */}
+        {/* ========================================== */}
+        <footer className="mt-12 pt-8 border-t border-zinc-800/50 text-center pb-6">
+          <a 
+            href="https://kcdev420.github.io/CV/" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 text-zinc-500 hover:text-yellow-500 transition-colors text-xs font-bold uppercase tracking-widest"
+          >
+            <span>Design & Development by Kevin Mora © 2026</span>
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+          </a>
+        </footer>
 
       </main>
     );

@@ -2,7 +2,7 @@
 import dynamic from 'next/dynamic';
 import { useMemo, useState, useEffect } from 'react';
 
-// Carga perezosa de Plotly
+// Carga perezosa de Plotly para no asfixiar a tu PC
 const Plot = dynamic(() => import('react-plotly.js'), { 
   ssr: false,
   loading: () => (
@@ -23,6 +23,7 @@ export default function DashboardClient({ rawData }) {
   }, []);
 
   const { mapData, trace3D, lines3D, donutData, barData, trendData } = useMemo(() => {
+    // 1. Diccionario GPS (Coordenadas de Ecuador)
     const locations = {
       'GYE': { lat: -2.1962, lon: -79.8862, name: 'Guayaquil' },
       'GUAYAQUIL': { lat: -2.1962, lon: -79.8862, name: 'Guayaquil' },
@@ -98,7 +99,7 @@ export default function DashboardClient({ rawData }) {
         connectionLines.push({
           type: 'scatter3d', mode: 'lines',
           x: g.x, y: g.y, z: g.z,
-          line: { color: g.z[0] < 0 ? '#22c55e' : '#eab308', width: 2, dash: 'dot' },
+          line: { color: g.z[0] < 0 ? '#22c55e' : '#22d3ee', width: 2, dash: 'dot' },
           hoverinfo: 'none', showlegend: false
         });
       }
@@ -130,13 +131,17 @@ export default function DashboardClient({ rawData }) {
     };
   }, [rawData]);
 
+  // ==========================================
+  // CONFIGURACIÓN DE MAPA (ZOOM EN ECUADOR)
+  // ==========================================
   const mapLayout = { 
     paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', margin: { t: 0, b: 0, l: 0, r: 0 }, 
     geo: { 
       scope: 'south america', showland: true, landcolor: '#18181b', 
       showocean: true, oceancolor: '#09090b', showlakes: true, lakecolor: '#09090b',
       showcountries: true, countrycolor: '#3f3f46', 
-      center: { lat: -1.5, lon: -78.5 }, projection: { type: 'mercator', scale: isMobile ? 3 : 5.5 } 
+      // Centro geográfico exacto y Zoom ajustado (22 para PC, 14 para Móviles)
+      center: { lat: -1.1312, lon: -79.1834 }, projection: { type: 'mercator', scale: isMobile ? 12 : 15 } 
     } 
   };
 
@@ -145,9 +150,9 @@ export default function DashboardClient({ rawData }) {
     margin: { t: 0, b: 0, l: 0, r: 0 }, 
     showlegend: false, 
     scene: { 
-      xaxis: { title: { text: 'FECHA REGISTRO', font: { color: '#a855f7', size: 11 } }, color: '#a1a1aa', tickfont: {size: 10}, tickangle: 45 }, 
-      yaxis: { title: { text: 'TIPO ACTIVIDAD', font: { color: '#a855f7', size: 11 } }, color: '#a1a1aa', tickfont: {size: 10} }, 
-      zaxis: { title: { text: 'HUELLA NETA (kg)', font: { color: '#a855f7', size: 11 } }, color: '#a1a1aa', tickfont: {size: 10} }, 
+      xaxis: { title: { text: 'FECHA REGISTRO', font: { color: '#22d3ee', size: 11 } }, color: '#a1a1aa', tickfont: {size: 10}, tickangle: 45 }, 
+      yaxis: { title: { text: 'TIPO ACTIVIDAD', font: { color: '#22d3ee', size: 11 } }, color: '#a1a1aa', tickfont: {size: 10} }, 
+      zaxis: { title: { text: 'HUELLA NETA (kg)', font: { color: '#22d3ee', size: 11 } }, color: '#a1a1aa', tickfont: {size: 10} }, 
       camera: { eye: isMobile ? { x: 2.2, y: 2.2, z: 1.2 } : { x: 2.0, y: 2.0, z: 1.1 } },
       aspectratio: { x: 1.2, y: 1.2, z: 0.8 } 
     } 
@@ -171,23 +176,43 @@ export default function DashboardClient({ rawData }) {
       {/* FILA 1: MAPA Y CUBO 3D */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
-        {/* MAPA - THEME: YELLOW */}
+        {/* MAPA - THEME: YELLOW CON LEYENDA FLOTANTE */}
         <div className="bg-zinc-900/50 p-6 rounded-2xl border border-yellow-900/30 shadow-xl overflow-hidden h-[450px] relative">
           <div className="absolute right-0 top-0 w-48 h-48 bg-yellow-500/10 rounded-full blur-3xl pointer-events-none"></div>
           <h3 className="text-yellow-500/90 text-xs font-bold uppercase mb-2 flex items-center gap-2 relative z-10 drop-shadow-[0_0_8px_rgba(234,179,8,0.5)]">
             <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></span> Radar Logístico Ecuador
           </h3>
+          
           <div className="h-full w-full relative z-10">
             <Plot data={[{ type: 'scattergeo', lat: mapData.map(d=>d.lat), lon: mapData.map(d=>d.lon), text: mapData.map(d=>d.hoverText), hoverinfo: 'text', marker: { size: mapData.map(d=>d.markerSize), color: mapData.map(d=>d.markerColor), line: {width: 1, color: '#18181b'}, opacity: 0.9 } }]} layout={mapLayout} useResizeHandler className="w-full h-full" style={{ width: "100%", height: "90%" }} config={{ responsive: true, displayModeBar: false }} />
           </div>
+
+          {/* LEYENDA FLOTANTE (STORYTELLING) */}
+          <div className="absolute bottom-6 left-6 bg-zinc-950/80 p-3 rounded-xl border border-zinc-800/80 shadow-lg backdrop-blur-md z-20 pointer-events-none">
+            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest mb-2 border-b border-zinc-800 pb-1">Leyenda de Impacto</p>
+            <div className="flex flex-col gap-2 mt-2">
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-yellow-500 shadow-[0_0_5px_rgba(234,179,8,0.5)]"></span>
+                <span className="text-[10px] text-zinc-300 font-medium">Emisión Neta (Crítica)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]"></span>
+                <span className="text-[10px] text-zinc-300 font-medium">Mitigación / Reciclaje</span>
+              </div>
+              <div className="flex items-center gap-2 mt-1 opacity-70">
+                <span className="w-3 h-3 rounded-full border border-zinc-400 flex items-center justify-center"><span className="w-1 h-1 bg-zinc-400 rounded-full"></span></span>
+                <span className="text-[10px] text-zinc-400 italic">Tamaño = Volumen CO2e</span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* 3D - THEME: PURPLE */}
-        <div className="bg-zinc-900/50 p-6 rounded-2xl border border-purple-900/40 shadow-xl overflow-hidden h-[450px] relative">
-          <div className="absolute right-0 bottom-0 w-48 h-48 bg-purple-500/10 rounded-full blur-3xl pointer-events-none"></div>
-          <h3 className="text-purple-400 text-xs font-bold uppercase mb-2 relative z-10 drop-shadow-[0_0_8px_rgba(168,85,247,0.5)]">Matriz Evolutiva 3D</h3>
+        {/* 3D - THEME: CYAN */}
+        <div className="bg-zinc-900/50 p-6 rounded-2xl border border-cyan-900/40 shadow-xl overflow-hidden h-[450px] relative">
+          <div className="absolute right-0 bottom-0 w-48 h-48 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
+          <h3 className="text-cyan-400 text-xs font-bold uppercase mb-2 relative z-10 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]">Matriz Evolutiva 3D</h3>
           <div className="h-full w-full cursor-move relative z-10">
-            <Plot data={[{ type: 'scatter3d', mode: 'markers', x: trace3D.x, y: trace3D.y, z: trace3D.z, text: trace3D.text, hoverinfo: 'text', marker: { size: 6, color: trace3D.color, colorscale: 'Viridis', opacity: 0.8 } }, ...lines3D]} layout={layout3D} useResizeHandler className="w-full h-full" style={{ width: "100%", height: "90%" }} config={{ responsive: true }} />
+            <Plot data={[{ type: 'scatter3d', mode: 'markers', x: trace3D.x, y: trace3D.y, z: trace3D.z, text: trace3D.text, hoverinfo: 'text', marker: { size: 6, color: trace3D.color, colorscale: 'PuBu', opacity: 0.8 } }, ...lines3D]} layout={layout3D} useResizeHandler className="w-full h-full" style={{ width: "100%", height: "90%" }} config={{ responsive: true }} />
           </div>
         </div>
       </div>

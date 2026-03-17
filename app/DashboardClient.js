@@ -1,245 +1,226 @@
 "use client";
 import dynamic from 'next/dynamic';
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 
-// Importación Dinámica de Plotly
-const Plot = dynamic(() => import('react-plotly.js'), { ssr: false });
+// Carga perezosa de Plotly
+const Plot = dynamic(() => import('react-plotly.js'), { 
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center h-full w-full bg-zinc-900/50 text-yellow-500 font-mono text-sm animate-pulse border border-zinc-800 rounded-2xl">
+      Calibrando Instrumentos de Telemetría...
+    </div>
+  )
+});
 
 export default function DashboardClient({ rawData }) {
-  
-  // ==========================================
-  // PROCESAMIENTO ETL BLINDADO Y AMPLIADO
-  // ==========================================
-  const { mapData, tracePuntos, traceLineas, donutData, barData } = useMemo(() => {
-    
-    // 1. DICCIONARIO GPS
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const { mapData, trace3D, lines3D, donutData, barData, trendData } = useMemo(() => {
     const locations = {
-      'GYE': { lat: -2.1962, lon: -79.8862, name: 'Guayaquil (GYE)', co2: 0, hasData: false },
-      'GUAYAQUIL': { lat: -2.1962, lon: -79.8862, name: 'Guayaquil', co2: 0, hasData: false },
-      'UIO': { lat: -0.1807, lon: -78.4678, name: 'Quito (UIO)', co2: 0, hasData: false },
-      'UIO12': { lat: -0.2000, lon: -78.5000, name: 'Quito Centro (UIO12)', co2: 0, hasData: false },
-      'QUITO': { lat: -0.1807, lon: -78.4678, name: 'Quito', co2: 0, hasData: false },
-      'CUE': { lat: -2.9001, lon: -79.0059, name: 'Cuenca (CUE)', co2: 0, hasData: false },
-      'CUENCA': { lat: -2.9001, lon: -79.0059, name: 'Cuenca', co2: 0, hasData: false },
-      'PVO': { lat: -1.0546, lon: -80.4544, name: 'Portoviejo (PVO)', co2: 0, hasData: false },
-      'PORTOVIEJO': { lat: -1.0546, lon: -80.4544, name: 'Portoviejo', co2: 0, hasData: false }
+      'GYE': { lat: -2.1962, lon: -79.8862, name: 'Guayaquil' },
+      'GUAYAQUIL': { lat: -2.1962, lon: -79.8862, name: 'Guayaquil' },
+      'UIO': { lat: -0.1807, lon: -78.4678, name: 'Quito' },
+      'UIO12': { lat: -0.2000, lon: -78.5000, name: 'Quito Centro' },
+      'QUITO': { lat: -0.1807, lon: -78.4678, name: 'Quito' },
+      'CUE': { lat: -2.9001, lon: -79.0059, name: 'Cuenca' },
+      'CUENCA': { lat: -2.9001, lon: -79.0059, name: 'Cuenca' },
+      'PVO': { lat: -1.0546, lon: -80.4544, name: 'Portoviejo' },
+      'PORTOVIEJO': { lat: -1.0546, lon: -80.4544, name: 'Portoviejo' }
     };
 
-    const acortarFecha = (str) => {
-      if (!str) return 'N/A';
-      const s = String(str);
-      if (s.length > 5 && s.includes('-')) return s.slice(5); 
-      return s.slice(0, 3).toUpperCase(); 
-    };
+    const sortedData = [...rawData].sort((a, b) => new Date(a.date) - new Date(b.date));
 
-    // Variables Maestras 3D
-    const marcadores = { fechas: [], actividades: [], co2: [], textos: [] };
-    const gruposLineas = {};
-    let maxAbs = 1;
-
-    // Variables Maestras 2D (NUEVO)
+    const mapPoints = {};
+    const scatter3D = { x: [], y: [], z: [], text: [], color: [] };
+    const groups = {};
+    const connectionLines = [];
+    
     const scopeTotals = {};
     const activityTotals = {};
+    const timeline = {}; 
 
-    rawData.forEach(item => {
+    sortedData.forEach(item => {
       let co2 = Number(item.co2e_kg) || 0;
       const isReciclaje = item.activity_type?.toLowerCase().includes('reciclaje');
       if (isReciclaje) co2 = -Math.abs(co2); 
 
       if (co2 !== 0) {
-        
-        // Calcular el máximo histórico para el Semáforo
-        maxAbs = Math.max(maxAbs, Math.abs(co2));
-
-        // Asignación de mapa 
-        const fac = item.facility ? item.facility.toUpperCase() : null;
-        if (fac && locations[fac]) {
-          locations[fac].co2 += co2;
-          locations[fac].hasData = true; 
-        }
-
-        // Procesamiento 3D
-        const fechaCorta = acortarFecha(item.mes_referencia || item.date);
-        const actividad = item.activity_type || 'N/A';
-        const sede = item.facility || 'General';
+        const facility = item.facility?.toUpperCase() || 'GENERAL';
+        const activity = item.activity_type || 'N/A';
+        const dateStr = item.date || 'N/A';
         const scopeLabel = `Scope ${item.scope || 3}`;
 
-        // Llenamos la Capa Maestra
-        marcadores.fechas.push(fechaCorta);
-        marcadores.actividades.push(actividad);
-        marcadores.co2.push(co2);
-        marcadores.textos.push(`Sede: ${sede}<br>Detalle: ${item.placa_vehiculo || 'N/A'}`);
+        const dateObj = new Date(dateStr);
+        const monthYear = !isNaN(dateObj) ? `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}` : 'Sin Fecha';
 
-        // Agrupamos para trazar las líneas lógicas
-        const llaveGrupo = `${actividad} | ${scopeLabel} | ${sede}`;
-        if (!gruposLineas[llaveGrupo]) {
-          gruposLineas[llaveGrupo] = { fechas: [], actividades: [], co2: [] };
-        }
-        gruposLineas[llaveGrupo].fechas.push(fechaCorta);
-        gruposLineas[llaveGrupo].actividades.push(actividad);
-        gruposLineas[llaveGrupo].co2.push(co2);
+        if (!timeline[monthYear]) timeline[monthYear] = { emision: 0, compensacion: 0 };
+        if (co2 > 0) timeline[monthYear].emision += co2;
+        else timeline[monthYear].compensacion += co2;
 
-        // --- LÓGICA 2D (NUEVO) ---
-        // 1. Donut de Scopes (Solo sumamos los que contaminan, > 0)
-        if (co2 > 0) {
-          scopeTotals[scopeLabel] = (scopeTotals[scopeLabel] || 0) + co2;
+        if (co2 > 0) scopeTotals[scopeLabel] = (scopeTotals[scopeLabel] || 0) + co2;
+        activityTotals[activity] = (activityTotals[activity] || 0) + co2;
+
+        if (locations[facility]) {
+          if (!mapPoints[facility]) mapPoints[facility] = { ...locations[facility], co2: 0 };
+          mapPoints[facility].co2 += co2;
         }
-        // 2. Barras de Actividad (Sumamos Netos, positivos y negativos)
-        activityTotals[actividad] = (activityTotals[actividad] || 0) + co2;
+
+        scatter3D.x.push(dateStr);
+        scatter3D.y.push(activity);
+        scatter3D.z.push(co2);
+        
+        scatter3D.text.push(
+          `<b>📍 Sede:</b> ${facility}<br>` +
+          `<b>⚙️ Actividad:</b> ${activity}<br>` +
+          `<b>📊 Categoría:</b> ${scopeLabel}<br>` +
+          `<b>📅 Fecha:</b> ${dateStr}<br>` +
+          `<b>☁️ Impacto:</b> ${co2.toLocaleString('es-EC')} kg CO2e`
+        );
+        scatter3D.color.push(co2);
+
+        const groupKey = `${facility}-${activity}-${scopeLabel}`;
+        if (!groups[groupKey]) groups[groupKey] = { x: [], y: [], z: [] };
+        groups[groupKey].x.push(dateStr);
+        groups[groupKey].y.push(activity);
+        groups[groupKey].z.push(co2);
       }
     });
 
-    // 1. TRAZO MAESTRO 3D
-    const trazoPrincipal = {
-      type: 'scatter3d',
-      mode: 'markers',
-      name: 'Operaciones',
-      x: marcadores.fechas,
-      y: marcadores.actividades,
-      z: marcadores.co2,
-      text: marcadores.textos,
-      hoverinfo: 'text+z',
-      marker: {
-        size: 8,
-        color: marcadores.co2,
-        colorscale: [ [0, '#22c55e'], [0.5, '#eab308'], [1, '#ef4444'] ],
-        cmin: -maxAbs,
-        cmax: maxAbs,
-        showscale: true,
-        colorbar: { title: 'kg CO2e', tickfont: { color: '#a1a1aa' }, titlefont: { color: '#a1a1aa' } }
+    Object.values(groups).forEach(g => {
+      if (g.x.length > 1) {
+        connectionLines.push({
+          type: 'scatter3d', mode: 'lines',
+          x: g.x, y: g.y, z: g.z,
+          line: { color: g.z[0] < 0 ? '#22c55e' : '#eab308', width: 2, dash: 'dot' },
+          hoverinfo: 'none', showlegend: false
+        });
       }
+    });
+
+    const sortedTimelineKeys = Object.keys(timeline).sort();
+    const trendFormatted = {
+      labels: sortedTimelineKeys,
+      emisiones: sortedTimelineKeys.map(k => timeline[k].emision),
+      compensaciones: sortedTimelineKeys.map(k => timeline[k].compensacion)
     };
 
-    // 2. LÍNEAS DE CONEXIÓN 3D
-    const trazosConexion = Object.values(gruposLineas)
-      .filter(grupo => grupo.co2.length > 1)
-      .map(grupo => ({
-        type: 'scatter3d',
-        mode: 'lines',
-        x: grupo.fechas,
-        y: grupo.actividades,
-        z: grupo.co2,
-        hoverinfo: 'none',
-        showlegend: false,
-        line: { color: grupo.co2[0] < 0 ? '#4ade80' : '#7f1d1d', width: 3 }
-      }));
+    const mapDataArray = Object.values(mapPoints);
+    const maxMapCo2 = Math.max(...mapDataArray.map(m => Math.abs(m.co2)), 1);
 
-    return {
-      mapData: Object.values(locations).filter(l => l.hasData),
-      tracePuntos: trazoPrincipal,
-      traceLineas: trazosConexion,
+    mapDataArray.forEach(d => {
+      d.markerSize = 10 + ((Math.abs(d.co2) / maxMapCo2) * 35);
+      d.markerColor = d.co2 < 0 ? '#22c55e' : '#eab308';
+      d.hoverText = `<b>${d.name}</b><br>Impacto Neto: ${d.co2.toLocaleString('es-EC', { maximumFractionDigits: 1 })} kg CO2e`;
+    });
+
+    return { 
+      mapData: mapDataArray, 
+      trace3D: scatter3D, 
+      lines3D: connectionLines,
       donutData: { labels: Object.keys(scopeTotals), values: Object.values(scopeTotals) },
-      barData: { labels: Object.keys(activityTotals), values: Object.values(activityTotals) }
+      barData: { labels: Object.keys(activityTotals), values: Object.values(activityTotals) },
+      trendData: trendFormatted
     };
   }, [rawData]);
 
-  // ==========================================
-  // CONFIGURACIÓN DE PANTALLA (Layouts)
-  // ==========================================
-
-  // --- MAPA ---
-  const traceMap = {
-    type: 'scattergeo',
-    lat: mapData.map(d => d.lat),
-    lon: mapData.map(d => d.lon),
-    text: mapData.map(d => `<b>${d.name}</b><br>Impacto Neto: ${d.co2.toFixed(1)} kg CO2e`),
-    hoverinfo: 'text',
-    marker: {
-      size: mapData.map(d => Math.min(Math.max((Math.abs(d.co2) / 500), 10), 30)), 
-      color: mapData.map(d => d.co2 < 0 ? 'rgba(34, 197, 94, 0.7)' : 'rgba(234, 179, 8, 0.7)'),
-      line: { color: mapData.map(d => d.co2 < 0 ? '#22c55e' : '#eab308'), width: 2 }
-    }
+  const mapLayout = { 
+    paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', margin: { t: 0, b: 0, l: 0, r: 0 }, 
+    geo: { 
+      scope: 'south america', showland: true, landcolor: '#18181b', 
+      showocean: true, oceancolor: '#09090b', showlakes: true, lakecolor: '#09090b',
+      showcountries: true, countrycolor: '#3f3f46', 
+      center: { lat: -1.5, lon: -78.5 }, projection: { type: 'mercator', scale: isMobile ? 3 : 5.5 } 
+    } 
   };
 
-  const layoutMap = {
-    paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', margin: { t: 0, b: 0, l: 0, r: 0 },
-    geo: { scope: 'south america', resolution: 50, showland: true, landcolor: '#18181b', showocean: true, oceancolor: '#09090b', showcountries: true, countrycolor: '#3f3f46', center: { lat: -1.4, lon: -79.0 }, projection: { type: 'mercator', scale: 4.5 } }
+  const layout3D = { 
+    paper_bgcolor: 'transparent', 
+    margin: { t: 0, b: 0, l: 0, r: 0 }, 
+    showlegend: false, 
+    scene: { 
+      xaxis: { title: { text: 'FECHA REGISTRO', font: { color: '#a855f7', size: 11 } }, color: '#a1a1aa', tickfont: {size: 10}, tickangle: 45 }, 
+      yaxis: { title: { text: 'TIPO ACTIVIDAD', font: { color: '#a855f7', size: 11 } }, color: '#a1a1aa', tickfont: {size: 10} }, 
+      zaxis: { title: { text: 'HUELLA NETA (kg)', font: { color: '#a855f7', size: 11 } }, color: '#a1a1aa', tickfont: {size: 10} }, 
+      camera: { eye: isMobile ? { x: 2.2, y: 2.2, z: 1.2 } : { x: 2.0, y: 2.0, z: 1.1 } },
+      aspectratio: { x: 1.2, y: 1.2, z: 0.8 } 
+    } 
   };
 
-  // --- 3D ---
-  const layout3D = {
-    paper_bgcolor: 'transparent', margin: { t: 0, b: 0, l: 0, r: 0 }, showlegend: false,
-    scene: {
-      xaxis: { title: { text: 'Fecha' }, tickfont: { size: 10 }, color: '#a1a1aa', gridcolor: '#27272a' },
-      yaxis: { title: { text: 'Actividad' }, tickfont: { size: 10 }, color: '#a1a1aa', gridcolor: '#27272a' },
-      zaxis: { title: { text: 'Huella Neta' }, tickfont: { size: 10 }, color: '#a1a1aa', gridcolor: '#27272a' },
-      camera: { eye: { x: 1.6, y: 1.6, z: 1.0 } }
-    }
-  };
-
-  // --- NUEVO: GRÁFICO DONUT (SCOPE) ---
-  const traceDonut = {
-    type: 'pie', hole: 0.6,
-    labels: donutData.labels, values: donutData.values,
-    hoverinfo: 'label+percent+value',
-    textinfo: 'percent',
-    marker: { colors: ['#eab308', '#f97316', '#ef4444', '#3b82f6'], line: { color: '#18181b', width: 2 } }
-  };
-  const layoutDonut = {
-    paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', margin: { t: 20, b: 20, l: 20, r: 20 },
-    showlegend: true, font: { color: '#a1a1aa' },
-    legend: { orientation: 'h', y: -0.1 }
-  };
-
-  // --- NUEVO: GRÁFICO DE BARRAS (ACTIVIDADES) ---
-  const traceBar = {
-    type: 'bar', orientation: 'h',
-    y: barData.labels, x: barData.values,
-    text: barData.values.map(v => `${v.toFixed(1)} kg`), textposition: 'auto',
-    marker: { 
-      color: barData.values.map(v => v < 0 ? '#22c55e' : '#eab308'), // Verde si es negativo, Amarillo corporativo si es positivo
-      line: { color: barData.values.map(v => v < 0 ? '#166534' : '#854d0e'), width: 1 } 
-    }
-  };
-  const layoutBar = {
-    paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', margin: { t: 10, b: 40, l: 120, r: 20 },
-    xaxis: { title: 'Impacto Neto (kg CO2e)', color: '#a1a1aa', gridcolor: '#27272a', zerolinecolor: '#52525b' },
-    yaxis: { color: '#a1a1aa' }
+  const layoutDonut = { paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', margin: { t: 20, b: 20, l: 20, r: 20 }, showlegend: true, font: { color: '#a1a1aa' }, legend: { orientation: 'h', y: -0.1 } };
+  const layoutBar = { paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', margin: { t: 10, b: 40, l: 140, r: 20 }, xaxis: { color: '#a1a1aa' }, yaxis: { color: '#a1a1aa', tickfont: {size: 11} } };
+  
+  const layoutTrend = { 
+    paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', margin: { t: 20, b: 40, l: 40, r: 20 }, 
+    font: { color: '#a1a1aa' },
+    barmode: 'relative', 
+    showlegend: true, legend: { orientation: 'h', y: 1.1 },
+    xaxis: { gridcolor: '#27272a' },
+    yaxis: { gridcolor: '#27272a' }
   };
 
   return (
-    <div className="flex flex-col gap-6 mt-8">
+    <div className="flex flex-col gap-6 mt-2">
       
-      {/* FILA 1: MAPA Y 3D (Se mantienen intactos) */}
+      {/* FILA 1: MAPA Y CUBO 3D */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-xl overflow-hidden">
-          <h3 className="text-zinc-400 text-xs uppercase font-bold mb-2 tracking-wider">Radar Logístico Ecuador</h3>
-          <p className="text-zinc-600 text-[10px] mb-4">Zoom adaptativo a sedes activas</p>
-          <div className="h-96 w-full relative">
-            <Plot data={[traceMap]} layout={layoutMap} config={{ displayModeBar: false, responsive: true }} style={{ width: '100%', height: '100%' }} />
+        
+        {/* MAPA - THEME: YELLOW */}
+        <div className="bg-zinc-900/50 p-6 rounded-2xl border border-yellow-900/30 shadow-xl overflow-hidden h-[450px] relative">
+          <div className="absolute right-0 top-0 w-48 h-48 bg-yellow-500/10 rounded-full blur-3xl pointer-events-none"></div>
+          <h3 className="text-yellow-500/90 text-xs font-bold uppercase mb-2 flex items-center gap-2 relative z-10 drop-shadow-[0_0_8px_rgba(234,179,8,0.5)]">
+            <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></span> Radar Logístico Ecuador
+          </h3>
+          <div className="h-full w-full relative z-10">
+            <Plot data={[{ type: 'scattergeo', lat: mapData.map(d=>d.lat), lon: mapData.map(d=>d.lon), text: mapData.map(d=>d.hoverText), hoverinfo: 'text', marker: { size: mapData.map(d=>d.markerSize), color: mapData.map(d=>d.markerColor), line: {width: 1, color: '#18181b'}, opacity: 0.9 } }]} layout={mapLayout} useResizeHandler className="w-full h-full" style={{ width: "100%", height: "90%" }} config={{ responsive: true, displayModeBar: false }} />
           </div>
         </div>
 
-        <div className="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-xl overflow-hidden">
-          <h3 className="text-zinc-400 text-xs uppercase font-bold mb-2 tracking-wider">Cubo Evolutivo 3D</h3>
-          <p className="text-zinc-600 text-[10px] mb-4">Gira para explorar. Líneas conectan misma operación en el tiempo.</p>
-          <div className="h-96 w-full cursor-move relative">
-            <Plot data={[tracePuntos, ...traceLineas]} layout={layout3D} config={{ responsive: true }} style={{ width: '100%', height: '100%' }} />
+        {/* 3D - THEME: PURPLE */}
+        <div className="bg-zinc-900/50 p-6 rounded-2xl border border-purple-900/40 shadow-xl overflow-hidden h-[450px] relative">
+          <div className="absolute right-0 bottom-0 w-48 h-48 bg-purple-500/10 rounded-full blur-3xl pointer-events-none"></div>
+          <h3 className="text-purple-400 text-xs font-bold uppercase mb-2 relative z-10 drop-shadow-[0_0_8px_rgba(168,85,247,0.5)]">Matriz Evolutiva 3D</h3>
+          <div className="h-full w-full cursor-move relative z-10">
+            <Plot data={[{ type: 'scatter3d', mode: 'markers', x: trace3D.x, y: trace3D.y, z: trace3D.z, text: trace3D.text, hoverinfo: 'text', marker: { size: 6, color: trace3D.color, colorscale: 'Viridis', opacity: 0.8 } }, ...lines3D]} layout={layout3D} useResizeHandler className="w-full h-full" style={{ width: "100%", height: "90%" }} config={{ responsive: true }} />
           </div>
         </div>
       </div>
 
-      {/* FILA 2: NUEVOS GRÁFICOS 2D */}
+      {/* FILA 2: EL GRÁFICO GERENCIAL TEMPORAL - THEME: CYAN */}
+      <div className="bg-zinc-900/50 p-6 rounded-2xl border border-cyan-900/40 shadow-xl overflow-hidden h-[350px] relative">
+        <div className="absolute left-1/2 top-0 -translate-x-1/2 w-64 h-32 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
+        <h3 className="text-cyan-400 text-xs font-bold uppercase mb-2 relative z-10 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]">Flujo Neto Mensual (Emisiones vs Compensación)</h3>
+        <div className="h-full w-full relative z-10">
+          <Plot data={[{ type: 'bar', x: trendData.labels, y: trendData.emisiones, name: 'Emisiones Brutas (kg)', marker: { color: '#ef4444' } }, { type: 'bar', x: trendData.labels, y: trendData.compensaciones, name: 'Reciclaje / Mitigación (kg)', marker: { color: '#22c55e' } }]} layout={layoutTrend} useResizeHandler className="w-full h-full" style={{ width: "100%", height: "90%" }} config={{ responsive: true, displayModeBar: false }} />
+        </div>
+      </div>
+
+      {/* FILA 3: SCOPES Y ACTIVIDADES */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
-        {/* GRÁFICO DONUT: DISTRIBUCIÓN POR SCOPE */}
-        <div className="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-xl overflow-hidden">
-          <h3 className="text-zinc-400 text-xs uppercase font-bold mb-2 tracking-wider">Distribución por Alcance (Scope)</h3>
-          <p className="text-zinc-600 text-[10px] mb-4">Porcentaje de emisiones brutas (excluye reciclaje)</p>
-          <div className="h-72 w-full relative">
-            <Plot data={[traceDonut]} layout={layoutDonut} config={{ displayModeBar: false, responsive: true }} style={{ width: '100%', height: '100%' }} />
+        {/* DONUT - THEME: ORANGE */}
+        <div className="bg-zinc-900/50 p-6 rounded-2xl border border-orange-900/30 shadow-xl overflow-hidden h-[350px] relative">
+          <div className="absolute left-0 bottom-0 w-48 h-48 bg-orange-500/10 rounded-full blur-3xl pointer-events-none"></div>
+          <h3 className="text-orange-400 text-xs font-bold uppercase mb-2 relative z-10 drop-shadow-[0_0_8px_rgba(251,146,60,0.5)]">Proporción por Scope</h3>
+          <div className="h-full w-full relative z-10">
+            <Plot data={[{ type: 'pie', hole: 0.6, labels: donutData.labels, values: donutData.values, marker: { colors: ['#eab308', '#f97316', '#ef4444'] }, hoverinfo: 'label+percent+value' }]} layout={layoutDonut} useResizeHandler className="w-full h-full" style={{ width: "100%", height: "90%" }} config={{ responsive: true, displayModeBar: false }} />
           </div>
         </div>
-
-        {/* GRÁFICO BARRAS: IMPACTO NETO POR ACTIVIDAD */}
-        <div className="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-xl overflow-hidden">
-          <h3 className="text-zinc-400 text-xs uppercase font-bold mb-2 tracking-wider">Balance Neto por Actividad</h3>
-          <p className="text-zinc-600 text-[10px] mb-4">Emisiones operativas vs. Compensación ambiental</p>
-          <div className="h-72 w-full relative">
-            <Plot data={[traceBar]} layout={layoutBar} config={{ displayModeBar: false, responsive: true }} style={{ width: '100%', height: '100%' }} />
+        
+        {/* BARRAS - THEME: EMERALD */}
+        <div className="bg-zinc-900/50 p-6 rounded-2xl border border-emerald-900/30 shadow-xl overflow-hidden h-[350px] relative">
+          <div className="absolute right-0 bottom-0 w-48 h-48 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+          <h3 className="text-emerald-400 text-xs font-bold uppercase mb-2 relative z-10 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]">Impacto Absoluto por Actividad</h3>
+          <div className="h-full w-full relative z-10">
+            <Plot data={[{ type: 'bar', orientation: 'h', y: barData.labels, x: barData.values, hoverinfo: 'x+y', marker: { color: barData.values.map(v => v < 0 ? '#22c55e' : '#eab308') } }]} layout={layoutBar} useResizeHandler className="w-full h-full" style={{ width: "100%", height: "90%" }} config={{ responsive: true, displayModeBar: false }} />
           </div>
         </div>
-
       </div>
 
     </div>

@@ -14,9 +14,12 @@ const Plot = dynamic(() => import('react-plotly.js'), {
 export default function DashboardClient({ rawData }) {
   const [isMobile, setIsMobile] = useState(false);
 
-  // Arrays para selección múltiple
+  // ==========================================
+  // ESTADOS DE FILTRADO MÚLTIPLE (AHORA SON 3)
+  // ==========================================
   const [activeScopes, setActiveScopes] = useState([]);
   const [activeFacilities, setActiveFacilities] = useState([]);
+  const [activeActivities, setActiveActivities] = useState([]); // NUEVO FILTRO
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -25,24 +28,28 @@ export default function DashboardClient({ rawData }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const toggleScope = (scopeNum) => {
-    setActiveScopes(prev => prev.includes(scopeNum) ? prev.filter(s => s !== scopeNum) : [...prev, scopeNum]);
-  };
+  // Funciones Toggle
+  const toggleScope = (scopeNum) => setActiveScopes(prev => prev.includes(scopeNum) ? prev.filter(s => s !== scopeNum) : [...prev, scopeNum]);
+  const toggleFacility = (facility) => setActiveFacilities(prev => prev.includes(facility) ? prev.filter(f => f !== facility) : [...prev, facility]);
+  const toggleActivity = (act) => setActiveActivities(prev => prev.includes(act) ? prev.filter(a => a !== act) : [...prev, act]); // NUEVO
 
-  const toggleFacility = (facility) => {
-    setActiveFacilities(prev => prev.includes(facility) ? prev.filter(f => f !== facility) : [...prev, facility]);
-  };
+  // Listas estáticas para la UI
+  const allFacilitiesList = useMemo(() => Array.from(new Set(rawData.map(d => d.facility?.toUpperCase() || 'GENERAL'))).filter(f => f !== 'N/A'), [rawData]);
+  const allActivitiesList = useMemo(() => Array.from(new Set(rawData.map(d => d.activity_type || 'Desconocida'))).filter(a => a !== 'N/A'), [rawData]); // NUEVO
 
-  const allFacilitiesList = useMemo(() => {
-    return Array.from(new Set(rawData.map(d => d.facility?.toUpperCase() || 'GENERAL'))).filter(f => f !== 'N/A');
-  }, [rawData]);
-
+  // MEGA-MOTOR DE CÁLCULO LOGÍSTICO COMPLETO
   const metrics = useMemo(() => {
+    // 1. FILTRAR DATOS EN LAS 3 DIMENSIONES
     const filteredData = rawData.filter(item => {
       let match = true;
       if (activeScopes.length > 0 && !activeScopes.includes(Number(item.scope))) match = false;
+      
       const fac = item.facility?.toUpperCase() || 'GENERAL';
       if (activeFacilities.length > 0 && !activeFacilities.includes(fac)) match = false;
+      
+      const act = item.activity_type || 'Desconocida';
+      if (activeActivities.length > 0 && !activeActivities.includes(act)) match = false;
+      
       return match;
     });
 
@@ -70,7 +77,8 @@ export default function DashboardClient({ rawData }) {
       const esReciclaje = item.activity_type && item.activity_type.toLowerCase().includes('reciclaje');
       let co2 = Number(item.co2e_kg) || 0;
 
-      if (esReciclaje) {
+      // Paneles solares o reciclaje (impactos negativos)
+      if (co2 < 0 || esReciclaje) {
         co2 = -Math.abs(co2);
         emisionesEvitadas += Math.abs(co2);
       }
@@ -130,7 +138,7 @@ export default function DashboardClient({ rawData }) {
 
     let topActividad = { nombre: '-', cantidad: -Infinity };
     for (const [nombre, cantidad] of Object.entries(activityData)) {
-      if (cantidad > topActividad.cantidad && !nombre.toLowerCase().includes('reciclaje')) topActividad = { nombre, cantidad };
+      if (cantidad > topActividad.cantidad && cantidad > 0) topActividad = { nombre, cantidad };
     }
     if (topActividad.cantidad === -Infinity) topActividad = { nombre: 'N/A', cantidad: 0 };
 
@@ -156,13 +164,13 @@ export default function DashboardClient({ rawData }) {
     });
 
     return { 
-      huellaNeta, emisionesEvitadas, scopeData, facilityData, topActividad, topVehiculo, arbolesNecesarios, porcentajeCompensado, alertColorClass,
+      huellaNeta, emisionesEvitadas, scopeData, facilityData, activityData, topActividad, topVehiculo, arbolesNecesarios, porcentajeCompensado, alertColorClass,
       mapData: mapDataArray, trace3D: scatter3D, lines3D: connectionLines, 
       donutData: { labels: ['Scope 1', 'Scope 2', 'Scope 3'], values: [scopeData[1]||0, scopeData[2]||0, scopeData[3]||0] }, 
       barData: { labels: Object.keys(activityData), values: Object.values(activityData) },
-      trendData: trendFormatted /* ACÁ ESTABA EL ERROR: ESTO FALTABA */
+      trendData: trendFormatted
     };
-  }, [rawData, activeScopes, activeFacilities]);
+  }, [rawData, activeScopes, activeFacilities, activeActivities]);
 
   const mapLayout = { paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', margin: { t: 0, b: 0, l: 0, r: 0 }, geo: { scope: 'south america', showland: true, landcolor: '#18181b', showocean: true, oceancolor: '#09090b', showlakes: true, lakecolor: '#09090b', showcountries: true, countrycolor: '#3f3f46', center: { lat: -1.1312, lon: -79.1834 }, projection: { type: 'mercator', scale: isMobile ? 12 : 15 } } };
   const layout3D = { paper_bgcolor: 'transparent', margin: { t: 0, b: 0, l: 0, r: 0 }, showlegend: false, scene: { xaxis: { title: { text: 'FECHA', font: { color: '#22d3ee', size: 10 } }, color: '#a1a1aa', tickfont: {size: 9}, tickangle: 45 }, yaxis: { title: { text: 'ACTIVIDAD', font: { color: '#22d3ee', size: 10 } }, color: '#a1a1aa', tickfont: {size: 9} }, zaxis: { title: { text: 'HUELLA (kg)', font: { color: '#22d3ee', size: 10 } }, color: '#a1a1aa', tickfont: {size: 9} }, camera: { eye: isMobile ? { x: 2.2, y: 2.2, z: 1.2 } : { x: 2.0, y: 2.0, z: 1.1 } }, aspectratio: { x: 1.2, y: 1.2, z: 0.8 } } };
@@ -172,14 +180,16 @@ export default function DashboardClient({ rawData }) {
 
   return (
     <>
-      {(activeScopes.length > 0 || activeFacilities.length > 0) && (
+      {/* BOTÓN LIMPIAR TODOS LOS FILTROS */}
+      {(activeScopes.length > 0 || activeFacilities.length > 0 || activeActivities.length > 0) && (
         <div className="flex justify-end mb-4 animate-fade-in">
-          <button onClick={() => { setActiveScopes([]); setActiveFacilities([]); }} className="bg-red-500/20 text-red-500 border border-red-500/50 px-4 py-2 rounded-lg text-xs font-bold hover:bg-red-500/40 transition-all flex items-center gap-2">
-            <span>✖</span> ELIMINAR FILTROS ({activeScopes.length + activeFacilities.length})
+          <button onClick={() => { setActiveScopes([]); setActiveFacilities([]); setActiveActivities([]); }} className="bg-red-500/20 text-red-500 border border-red-500/50 px-4 py-2 rounded-lg text-xs font-bold hover:bg-red-500/40 transition-all flex items-center gap-2">
+            <span>✖</span> ELIMINAR FILTROS ({activeScopes.length + activeFacilities.length + activeActivities.length})
           </button>
         </div>
       )}
 
+      {/* SECCIÓN 1: KPIs GLOBALES Y SCOPE */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
         <div className="bg-zinc-900 p-6 rounded-xl border border-yellow-900/30 shadow-xl relative overflow-hidden">
           <div className="absolute right-0 top-0 w-32 h-32 bg-yellow-500/10 rounded-full blur-2xl pointer-events-none"></div>
@@ -200,7 +210,7 @@ export default function DashboardClient({ rawData }) {
         <div className="bg-zinc-900 p-5 rounded-xl border border-blue-900/30 shadow-xl relative overflow-hidden flex flex-col justify-center sm:col-span-2 lg:col-span-1">
           <div className="absolute right-0 top-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl pointer-events-none"></div>
           <p className="text-blue-400/80 text-xs uppercase font-bold tracking-wider mb-3 relative z-10 flex justify-between items-center">
-            Selección Scope <span className="text-[9px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded">Múltiple</span>
+            Filtro Scope <span className="text-[9px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded">Múltiple</span>
           </p>
           <div className="space-y-2 relative z-10">
             {[1, 2, 3].map((scopeNum) => {
@@ -220,6 +230,7 @@ export default function DashboardClient({ rawData }) {
         </div>
       </div>
 
+      {/* SECCIÓN 2: EQUIVALENCIA ECOLÓGICA */}
       <div className="mb-10 bg-gradient-to-r from-zinc-900 to-[#0a0a0a] rounded-xl border border-zinc-800 shadow-2xl overflow-hidden relative">
         <div className={`absolute right-0 top-0 w-96 h-full ${metrics.huellaNeta > 1000 ? 'bg-red-500/10' : 'bg-green-500/10'} blur-3xl rounded-full pointer-events-none`}></div>
         <div className="p-6 md:p-8 relative z-10 flex flex-col lg:flex-row items-center justify-between gap-8">
@@ -241,25 +252,28 @@ export default function DashboardClient({ rawData }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
+      {/* SECCIÓN 3: AUDITORÍA Y FILTROS SECUNDARIOS (4 COLUMNAS) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+        
         <div className="bg-zinc-900 p-6 rounded-xl border border-red-900/40 shadow-xl relative overflow-hidden">
           <div className="absolute right-0 top-0 w-24 h-24 bg-red-500/10 rounded-full blur-2xl pointer-events-none"></div>
-          <p className="text-red-500/80 text-xs uppercase font-bold tracking-wider mb-2 relative z-10">Top Actividad Crítica</p>
+          <p className="text-red-500/80 text-xs uppercase font-bold tracking-wider mb-2 relative z-10">Top Actividad</p>
           <h2 className="text-xl font-bold text-white truncate relative z-10" title={metrics.topActividad.nombre}>{metrics.topActividad.nombre}</h2>
-          <p className="text-red-400 text-sm font-bold mt-1 relative z-10 drop-shadow-[0_0_8px_rgba(248,113,113,0.4)]">{metrics.topActividad.cantidad.toLocaleString('es-EC', { maximumFractionDigits: 1 })} kg CO2e</p>
+          <p className="text-red-400 text-sm font-bold mt-1 relative z-10 drop-shadow-[0_0_8px_rgba(248,113,113,0.4)]">{metrics.topActividad.cantidad.toLocaleString('es-EC', { maximumFractionDigits: 1 })} kg</p>
         </div>
 
         <div className="bg-zinc-900 p-6 rounded-xl border border-orange-900/40 shadow-xl relative overflow-hidden">
           <div className="absolute right-0 top-0 w-24 h-24 bg-orange-500/10 rounded-full blur-2xl pointer-events-none"></div>
           <p className="text-orange-500/80 text-xs uppercase font-bold tracking-wider mb-2 relative z-10">Top Vehículo</p>
           <h2 className="text-xl font-bold text-white tracking-widest relative z-10">{metrics.topVehiculo.placa}</h2>
-          <p className="text-orange-400 text-sm font-bold mt-1 relative z-10 drop-shadow-[0_0_8px_rgba(251,146,60,0.4)]">{metrics.topVehiculo.cantidad.toLocaleString('es-EC', { maximumFractionDigits: 1 })} kg CO2e</p>
+          <p className="text-orange-400 text-sm font-bold mt-1 relative z-10 drop-shadow-[0_0_8px_rgba(251,146,60,0.4)]">{metrics.topVehiculo.cantidad.toLocaleString('es-EC', { maximumFractionDigits: 1 })} kg</p>
         </div>
 
-        <div className="bg-zinc-900 p-5 rounded-xl border border-indigo-900/40 shadow-xl relative overflow-hidden sm:col-span-2 lg:col-span-1">
+        {/* FILTRO: SEDES (ÍNDIGO) */}
+        <div className="bg-zinc-900 p-5 rounded-xl border border-indigo-900/40 shadow-xl relative overflow-hidden">
           <div className="absolute right-0 top-0 w-24 h-24 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none"></div>
           <p className="text-indigo-400/80 text-xs uppercase font-bold tracking-wider mb-3 relative z-10 flex justify-between items-center">
-            Selección de Sede <span className="text-[9px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded">Múltiple</span>
+            Filtro Sede <span className="text-[9px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded">Múltiple</span>
           </p>
           <div className="space-y-2 overflow-y-auto max-h-24 pr-2 custom-scrollbar relative z-10">
             {allFacilitiesList.map((facility) => {
@@ -271,15 +285,41 @@ export default function DashboardClient({ rawData }) {
                     {isActive && <span className="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>} {facility}
                   </span>
                   <span className={`font-mono ${isActive ? 'text-white font-bold' : 'text-indigo-400/50'}`}>
-                    {cantidadLocal.toLocaleString('es-EC', { maximumFractionDigits: 0 })} kg
+                    {cantidadLocal.toLocaleString('es-EC', { maximumFractionDigits: 0 })}
                   </span>
                 </div>
               );
             })}
           </div>
         </div>
+
+        {/* NUEVO FILTRO: ACTIVIDADES (PÚRPURA) */}
+        <div className="bg-zinc-900 p-5 rounded-xl border border-purple-900/40 shadow-xl relative overflow-hidden">
+          <div className="absolute right-0 top-0 w-24 h-24 bg-purple-500/10 rounded-full blur-2xl pointer-events-none"></div>
+          <p className="text-purple-400/80 text-xs uppercase font-bold tracking-wider mb-3 relative z-10 flex justify-between items-center">
+            Filtro Actividad <span className="text-[9px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">Múltiple</span>
+          </p>
+          <div className="space-y-2 overflow-y-auto max-h-24 pr-2 custom-scrollbar relative z-10">
+            {allActivitiesList.map((act) => {
+              const isActive = activeActivities.includes(act);
+              const cantidadLocal = metrics.activityData[act] || 0;
+              return (
+                <div key={act} onClick={() => toggleActivity(act)} className={`flex justify-between items-center text-xs border-b border-zinc-800/50 pb-1 cursor-pointer rounded px-2 transition-all ${isActive ? 'bg-purple-500/30 border-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.3)]' : 'hover:bg-zinc-800'}`}>
+                  <span className={isActive ? 'text-white font-bold flex items-center gap-2 truncate w-2/3' : 'text-zinc-300 font-medium truncate w-2/3'} title={act}>
+                    {isActive && <span className="w-1.5 h-1.5 rounded-full bg-purple-400 flex-shrink-0"></span>} {act}
+                  </span>
+                  <span className={`font-mono ${isActive ? 'text-white font-bold' : 'text-purple-400/50'}`}>
+                    {cantidadLocal.toLocaleString('es-EC', { maximumFractionDigits: 0 })}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
       </div>
 
+      {/* SECCIÓN 4: GRÁFICOS INTERACTIVOS (Ya conectados a los 3 filtros) */}
       <div className="flex flex-col gap-6 mt-2">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-zinc-900/50 p-6 rounded-2xl border border-yellow-900/30 shadow-xl overflow-hidden h-[450px] relative">
